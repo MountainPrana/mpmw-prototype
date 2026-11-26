@@ -3,7 +3,7 @@
 // they are saved on the phone by the app itself when opened (see store.js).
 //
 // After changing any file listed below, raise VERSION so phones fetch the new copy.
-const VERSION = "haiku-v2";
+const VERSION = "haiku-v4";
 const FILES = [
   "./",
   "./index.html",
@@ -26,11 +26,15 @@ const FILES = [
   "./fonts/barlow-condensed-latin-700-normal.woff2",
   "./lib/maplibre-gl.css",
   "./lib/maplibre-gl.js",
-  "./lib/pmtiles.js"
+  "./lib/pmtiles.js",
+  "./lib/magvar.js"
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(FILES)));
+  // cache: "reload" asks the server for fresh copies, not ones the browser kept from an
+  // earlier visit, so a new version never mixes in old files.
+  event.waitUntil(caches.open(VERSION).then((cache) =>
+    cache.addAll(FILES.map((f) => new Request(f, { cache: "reload" })))));
   self.skipWaiting();
 });
 
@@ -44,19 +48,31 @@ self.addEventListener("activate", (event) => {
 
 // Network first (so updates show up when there is signal), saved copy when offline.
 // Map tiles and partial-file requests are left alone.
+//
+// With weak signal (bars but no real data) a request can hang for a minute before it
+// fails, so the saved copy is used after WAIT_MS. The network copy still updates the
+// saved one if it arrives later.
+const WAIT_MS = 4000;
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET" || req.headers.has("range")) return;
   if (new URL(req.url).origin !== location.origin) return;
-  event.respondWith(
-    fetch(req)
-      .then((res) => {
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(VERSION).then((cache) => cache.put(req, copy));
-        }
-        return res;
-      })
-      .catch(() => caches.match(req, { ignoreSearch: true }))
-  );
+  const network = fetch(req);
+  // Save a copy for offline use (copied right away, before the page reads the response).
+  const saving = network.then((res) => {
+    if (!res.ok) return;
+    const copy = res.clone();
+    return caches.open(VERSION).then((cache) => cache.put(req, copy));
+  });
+  event.waitUntil(saving.catch(() => {}));
+  event.respondWith(networkOrSaved(req, network));
 });
+
+async function networkOrSaved(req, network) {
+  const slow = new Promise((resolve) => setTimeout(resolve, WAIT_MS, null));
+  const first = await Promise.race([network.catch(() => null), slow]);
+  if (first) return first;
+  const saved = await caches.match(req, { ignoreSearch: true });
+  return saved || network;   // nothing saved yet: keep waiting for the network
+}

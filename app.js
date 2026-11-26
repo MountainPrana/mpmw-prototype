@@ -12,7 +12,10 @@
 
 "use strict";
 
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.0";
+
+// The Map Store shows in the Haiku menu once the website exists: put its address here.
+const MAP_STORE_URL = "";
 
 // ---------------------------------------------------------------- small helpers
 
@@ -86,6 +89,7 @@ const ICONS = {
   remove: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/></svg>',
   warning: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l10 18H2z"/><path d="M12 10v5"/><path d="M12 18h.01"/></svg>',
   noLocation: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M4 4l16 16"/></svg>',
+  store: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
   searching: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/></svg>'
 };
 
@@ -99,6 +103,7 @@ const state = {
   gps: "idle",       // idle | waiting | ok | denied
   watchId: null,
   following: false,
+  compass: false,    // the map turns with the phone's compass
   aligning: false,
   sheet: null,       // what the bottom sheet shows: add | waypoint | more | list | info | confirm
   draft: null,       // the waypoint being added or edited
@@ -113,7 +118,8 @@ function showView(name) {
   for (const view of document.querySelectorAll(".view")) {
     view.classList.toggle("is-active", view.id === "view-" + name);
   }
-  if (name !== "map") { stopGps(); closeSheet(); }
+  if (name !== "map") { stopGps(); closeSheet(); if (state.compass) setCompass(false); }
+  if (name !== "maps") closeAppMenu();
 }
 
 function go(hash, replace = false) {
@@ -122,20 +128,42 @@ function go(hash, replace = false) {
   else location.hash = hash;
 }
 
+// Whether the map screen was opened from My maps (one step back in the history). Then the
+// app's back arrow steps back too, so it agrees with the phone's own back button and swipe
+// instead of piling up screens to go round in circles through.
+let lastHash = null;
+let backIsHistory = false;
+
 function route() {
   const hash = location.hash;
+  const from = lastHash;
+  lastHash = hash;
   if (hash.startsWith("#map/")) {
     const id = decodeURIComponent(hash.slice(5));
     const rec = state.maps.find((m) => m.id === id);
+    backIsHistory = from === "#maps";
     if (rec) return openMap(rec);
     return go("#maps", true);
   }
-  if (hash === "#welcome") return showView("welcome");
+  if (hash === "#welcome" || hash === "#about") {
+    // The Welcome screen doubles as About Haiku (opened from the menu).
+    const about = hash === "#about";
+    for (const el of document.querySelectorAll("[data-about]")) el.hidden = !about;
+    for (const el of document.querySelectorAll("[data-first-open]")) el.hidden = about;
+    $("#about-version").textContent = `Haiku beta ${APP_VERSION}`;
+    backIsHistory = about && from === "#maps";
+    return showView("welcome");
+  }
   if (hash === "#maps") { renderMaps(); return showView("maps"); }
   return go(Settings.get("welcomed") ? "#maps" : "#welcome", true);
 }
 
 window.addEventListener("hashchange", route);
+
+function backToMaps() {
+  if (backIsHistory) { backIsHistory = false; history.back(); }
+  else go("#maps", true);
+}
 
 // ---------------------------------------------------------------- My maps
 
@@ -352,16 +380,24 @@ function ensureMap() {
     },
     center: [-108.97, 42.67], zoom: 12,
     maxZoom: 19,              // tiles stop at 17; 18 and 19 just enlarge them
+    // Two fingers can twist the map (except in compass mode, where the compass turns it).
+    // Right-click stays "add a waypoint" on a computer, so the mouse can't turn the map.
     dragRotate: false, pitchWithRotate: false, touchPitch: false, boxZoom: false,
     attributionControl: false
   });
-  map.touchZoomRotate.disableRotation();
-  map.keyboard.disableRotation();
   map.addControl(new maplibregl.ScaleControl({ unit: "imperial", maxWidth: 90 }), "bottom-left");
   mapReady = new Promise((resolve) => map.once("load", resolve));
 
-  map.on("dragstart", () => setFollowing(false));
-  map.on("zoom", sizeAccuracyCircle);
+  // Dragging the map stops following you (and compass mode). Pinching to zoom doesn't.
+  map.on("dragstart", (e) => {
+    const touches = e.originalEvent && e.originalEvent.touches;
+    if (touches && touches.length > 1) return;
+    setFollowing(false);
+    if (state.compass) setCompass(false);
+  });
+  map.on("rotate", onRotate);
+  map.on("zoom", () => { sizeAccuracyCircle(); sizeWaypointsForZoom(); });
+  sizeWaypointsForZoom();
   map.on("click", (e) => {
     if (e.originalEvent && e.originalEvent.target.closest(".wp-marker")) return;
     if (["waypoint", "more", "list", "info"].includes(state.sheet)) closeSheet();
@@ -407,6 +443,7 @@ async function openMap(rec) {
     map.setMinZoom(Math.max(0, rec.minZoom - 1));
     setAlignment(false);
     setFollowing(false);
+    if (state.compass) setCompass(false);
     fitWhole(false);
     renderWaypointMarkers();
   }
@@ -424,7 +461,8 @@ function fitWhole(animate = true) {
   let top = $(".topbar").getBoundingClientRect().bottom + 8;
   let bottom = viewH - $("#gps-card").getBoundingClientRect().top + 8;
   if (top + bottom > viewH - 120) { top = 12; bottom = 12; }
-  map.fitBounds([[w, s], [e, n]], { padding: { top, bottom, left: 12, right: 12 }, animate });
+  // The whole page is shown north up, the way it was printed.
+  map.fitBounds([[w, s], [e, n]], { padding: { top, bottom, left: 12, right: 12 }, bearing: 0, animate });
 }
 
 function onCurrentMap(lat, lon) {
@@ -448,23 +486,25 @@ function setAlignment(on) {
   $("#osm-credit").hidden = !on;
 }
 
-// Keep the spot of interest visible above the bottom sheet.
+// Keep the spot of interest visible in the strip of map between the top bar and the bottom
+// sheet. (Measured, not guessed: the strip depends on the phone and on the sheet. Tall
+// sheets are kept short enough in app.css that there is always a strip.)
 function revealAboveSheet(lngLat) {
   const sheet = $("#sheet");
-  const sheetH = sheet.hidden ? 0 : sheet.offsetHeight;
-  const viewH = map.getContainer().offsetHeight;
-  const point = map.project(lngLat);
-  const visibleBottom = viewH - sheetH - 40;
-  const visibleTop = 120;
-  if (point.y > visibleTop && point.y < visibleBottom) return;
-  const targetY = visibleTop + Math.max(0, (visibleBottom - visibleTop) / 2);
-  map.panBy([0, point.y - targetY], { duration: 300 });
+  const box = map.getContainer().getBoundingClientRect();
+  const top = $(".topbar").getBoundingClientRect().bottom - box.top + 24;
+  const bottom = box.height - (sheet.hidden ? 0 : sheet.offsetHeight) - 24;
+  const y = map.project(lngLat).y;
+  if (y >= top && y <= bottom) return;
+  const targetY = bottom > top ? (top + bottom) / 2 : top;
+  map.panBy([0, y - targetY], { duration: 300 });
 }
 
 // Press and hold on the map adds a waypoint there. (Phones don't all send a "long press"
 // event, so it is timed here: one finger down for 0.55 s without moving.)
 let lastAddAt = 0;
-let swallowClickUntil = 0;   // the click a browser sends when the long-pressing finger lifts
+let swallowClickUntil = 0;
+let fingersDown = 0;         // fingers on the map; following and the compass wait while > 0   // the click a browser sends when the long-pressing finger lifts
 function setupLongPress() {
   const box = map.getCanvasContainer();
   let timer = null, start = null;
@@ -472,9 +512,12 @@ function setupLongPress() {
   const cancel = () => { clearTimeout(timer); timer = null; };
   const begin = (x, y, target) => {
     cancel();
+    // Every new press starts fresh. If the lift after the last long press was missed (the
+    // sheet opened under the mouse, or the finger was on a marker that got redrawn), a
+    // leftover "fired" would swallow this tap, and tapping a waypoint would do nothing.
+    fired = false;
     if (target && target.closest && target.closest(".wp-marker")) return;
     start = { x, y };
-    fired = false;
     timer = setTimeout(() => {
       timer = null;
       fired = true;
@@ -484,6 +527,10 @@ function setupLongPress() {
     }, 550);
   };
   const moved = (x, y) => { if (timer && Math.hypot(x - start.x, y - start.y) > 10) cancel(); };
+  const countFingers = (e) => { fingersDown = e.touches.length; };
+  for (const type of ["touchstart", "touchend", "touchcancel"]) {
+    box.addEventListener(type, countFingers, { passive: true });
+  }
   box.addEventListener("touchstart", (e) => {
     if (e.touches.length !== 1) return cancel();
     begin(e.touches[0].clientX, e.touches[0].clientY, e.target);
@@ -501,7 +548,9 @@ function setupLongPress() {
   box.addEventListener("touchcancel", cancel);
   box.addEventListener("mousedown", (e) => { if (e.button === 0) begin(e.clientX, e.clientY, e.target); });
   box.addEventListener("mousemove", (e) => { if (timer) moved(e.clientX, e.clientY); });
-  box.addEventListener("mouseup", lifted);
+  // On the whole window: the sheet that opens can end up under the mouse, so the button
+  // is often released over the sheet, not the map.
+  window.addEventListener("mouseup", lifted);
   map.on("zoomstart", cancel);
 }
 
@@ -527,13 +576,20 @@ function onFix(pos) {
   if (!gpsMarker) {
     const el = document.createElement("div");
     el.className = "gps-marker";
-    el.innerHTML = '<div class="gps-accuracy"></div><div class="gps-dot"></div>';
+    // The cone shows which way the phone points (compass mode only).
+    el.innerHTML = '<div class="gps-accuracy"></div>' +
+      '<div class="gps-heading" hidden><svg width="48" height="48" viewBox="0 0 48 48" aria-hidden="true">' +
+      '<defs><linearGradient id="heading-fade" x1="0" y1="1" x2="0" y2="0">' +
+      '<stop offset="0" stop-opacity="0.75"/><stop offset="1" stop-opacity="0"/></linearGradient></defs>' +
+      '<path d="M24 48L4 9a44 44 0 0 1 40 0z" fill="url(#heading-fade)"/></svg></div>' +
+      '<div class="gps-dot"></div>';
     gpsMarker = new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(map);
   } else {
     gpsMarker.setLngLat([lon, lat]);
   }
   sizeAccuracyCircle();
-  if (state.following) map.easeTo({ center: [lon, lat], duration: 600 });
+  updateHeadingCone();
+  if (state.following && !state.compass && !fingersDown) map.easeTo({ center: [lon, lat], duration: 600 });
   renderGpsCard();
 }
 
@@ -566,7 +622,12 @@ function renderGpsCard() {
     if (onCurrentMap(lat, lon)) {
       icon = '<span class="dot"></span>';
       main = fmtCoords(lat, lon);
-      sub = `Accuracy ±${fmtFeet(accuracy)} · On this map`;
+      // In compass mode the second line shows which way you face instead (for checking
+      // against a real compass); the compass's own accuracy shows when the phone gives it.
+      sub = state.compass && compass.smooth !== null
+        ? `±${fmtFeet(accuracy)} · Facing ${Math.round(compass.smooth) % 360}° true` +
+          (compass.accuracy > 0 ? ` · compass ±${Math.round(compass.accuracy)}°` : "")
+        : `Accuracy ±${fmtFeet(accuracy)} · On this map`;
     } else {
       warn = true;
       icon = ICONS.warning;
@@ -590,10 +651,21 @@ function renderGpsCard() {
 
 function setFollowing(on) {
   state.following = on;
-  $('[data-action="follow"]').setAttribute("aria-pressed", String(on));
+  const btn = $('[data-action="follow"]');
+  btn.setAttribute("aria-pressed", String(on));
+  btn.setAttribute("aria-label", state.compass ? "Compass on: tap for north up"
+    : on ? "Following you: tap to turn the map with the compass" : "Follow my location");
 }
 
+// The location button: first tap follows you (north up), second tap also turns the map
+// with the compass, third tap goes back to north up. Dragging the map stops both.
 function onFollow() {
+  if (state.following && !state.compass) return startCompassMode();
+  if (state.compass) {
+    setCompass(false);
+    map.easeTo({ bearing: 0, duration: 400 });
+    return;
+  }
   if (state.gps === "denied") {
     toast("Location is off. Allow location for this page in your phone's Settings.", 5000);
     return;
@@ -608,9 +680,173 @@ function onFollow() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) stopGps();
-  else if ($("#view-map").classList.contains("is-active")) startGps();
+  if (document.hidden) { stopGps(); stopCompassSensor(); }
+  else if ($("#view-map").classList.contains("is-active")) {
+    startGps();
+    if (state.compass) startCompassSensor();
+  }
 });
+
+// ---------------------------------------------------------------- compass: the map turns with the phone
+//
+// iPhone: Safari asks once for "Motion & Orientation" access (it must be asked from a tap),
+// then gives webkitCompassHeading. Android: the deviceorientationabsolute event, no asking.
+// Both point to magnetic north, so the declination from NOAA's World Magnetic Model
+// (lib/magvar.js, works offline) is added to get true north, which is up on the map.
+
+const COMPASS_SMOOTHING = 0.1;   // share of the way to the newest reading, each frame (60 a second)
+const compass = {
+  listening: false, raw: null, smooth: null, accuracy: -1,
+  gotReading: false, frame: null, timer: null, cardAt: 0,
+  decl: 0, declAt: null           // declination in degrees east, and where it was worked out
+};
+
+function startCompassMode() {
+  // On iPhone the permission has to be asked right here, in the tap. (Newer Chrome has the
+  // same call; on Android it answers without asking.)
+  if (typeof DeviceOrientationEvent !== "undefined" &&
+      typeof DeviceOrientationEvent.requestPermission === "function") {
+    DeviceOrientationEvent.requestPermission().then((answer) => {
+      if (answer === "granted") setCompass(true);
+      else if (isIPhone()) toast("Turning the map needs Motion & Orientation access. Close Haiku completely and open it again to be asked again.", 7000);
+      else toast("This phone didn't let Haiku use its compass, so the map stays north up.", 5000);
+    }).catch(() => toast("Couldn't start the compass on this phone.", 4000));
+    return;
+  }
+  setCompass(true);
+}
+
+function isIPhone() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);   // iPad asks to be a Mac
+}
+
+function setCompass(on) {
+  state.compass = on;
+  $('[data-action="follow"]').classList.toggle("is-compass", on);
+  if (on) {
+    setFollowing(true);
+    map.touchZoomRotate.disableRotation();
+    compass.raw = compass.smooth = null;
+    startCompassSensor();
+  } else {
+    if (map) map.touchZoomRotate.enableRotation();
+    stopCompassSensor();
+    compass.raw = compass.smooth = null;
+  }
+  setFollowing(state.following);   // updates the button's label
+  onRotate();
+  updateHeadingCone();
+  renderGpsCard();
+}
+
+// Both events are heard: iPhone sends "deviceorientation" with webkitCompassHeading;
+// Android sends "deviceorientationabsolute". Readings that aren't tied to north are ignored.
+const ORIENTATION_EVENTS = ["deviceorientationabsolute", "deviceorientation"];
+
+function startCompassSensor() {
+  if (compass.listening) return;
+  for (const type of ORIENTATION_EVENTS) window.addEventListener(type, onOrientation);
+  compass.listening = true;
+  compass.gotReading = false;
+  clearTimeout(compass.timer);
+  compass.timer = setTimeout(() => {
+    if (state.compass && !compass.gotReading) {
+      toast("This device has no compass Haiku can use, so the map stays north up.", 5000);
+      setCompass(false);
+      map.easeTo({ bearing: 0, duration: 400 });
+    }
+  }, 3000);
+  cancelAnimationFrame(compass.frame);
+  compass.frame = requestAnimationFrame(compassFrame);
+}
+
+function stopCompassSensor() {
+  if (compass.listening) for (const type of ORIENTATION_EVENTS) window.removeEventListener(type, onOrientation);
+  compass.listening = false;
+  clearTimeout(compass.timer);
+  cancelAnimationFrame(compass.frame);
+}
+
+function onOrientation(e) {
+  let magnetic = null;
+  if (typeof e.webkitCompassHeading === "number" && e.webkitCompassHeading >= 0) {
+    magnetic = e.webkitCompassHeading;                       // iPhone
+    compass.accuracy = typeof e.webkitCompassAccuracy === "number" ? e.webkitCompassAccuracy : -1;
+  } else if (e.absolute && typeof e.alpha === "number") {
+    magnetic = headingFromAngles(e.alpha, e.beta, e.gamma);  // Android
+    compass.accuracy = -1;
+  }
+  if (magnetic === null || !Number.isFinite(magnetic)) return;
+  compass.gotReading = true;
+  // If the phone is turned sideways, the top of the screen is a side of the phone.
+  const screenAngle = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  compass.raw = norm360(magnetic + screenAngle + declinationHere());
+}
+
+// Which way the phone points, from the Android angles: the top edge (best when the phone
+// is flat) plus the back (best when it's upright), both laid flat on the ground.
+function headingFromAngles(alpha, beta, gamma) {
+  const d = Math.PI / 180;
+  const sa = Math.sin(alpha * d), ca = Math.cos(alpha * d);
+  const sb = Math.sin((beta || 0) * d), cb = Math.cos((beta || 0) * d);
+  const sg = Math.sin((gamma || 0) * d), cg = Math.cos((gamma || 0) * d);
+  const east = -sa * cb - ca * sg - sa * sb * cg;
+  const north = ca * cb - sa * sg + ca * sb * cg;
+  return norm360(Math.atan2(east, north) / d);
+}
+
+// Declination where you are (or at the map's center), worked out again after ~10 km.
+function declinationHere() {
+  const p = state.fix ? { lat: state.fix.lat, lon: state.fix.lon }
+    : map ? { lat: map.getCenter().lat, lon: map.getCenter().lng } : null;
+  if (!p || !window.magvar) return compass.decl;
+  if (!compass.declAt || Math.abs(p.lat - compass.declAt.lat) > 0.1 || Math.abs(p.lon - compass.declAt.lon) > 0.1) {
+    try { compass.decl = magvar.magvar(p.lat, p.lon); compass.declAt = p; } catch { /* keep the last value */ }
+  }
+  return compass.decl;
+}
+
+function norm360(deg) { return ((deg % 360) + 360) % 360; }
+function angleDiff(a, b) { return ((a - b + 540) % 360) - 180; }   // shortest turn from b to a
+
+// Each frame: ease toward the newest compass reading (so the map doesn't shiver), turn the
+// map to it, and keep your position in the middle. Waits while fingers are on the map.
+function compassFrame() {
+  compass.frame = requestAnimationFrame(compassFrame);
+  if (!state.compass || compass.raw === null) return;
+  compass.smooth = compass.smooth === null ? compass.raw
+    : norm360(compass.smooth + angleDiff(compass.raw, compass.smooth) * COMPASS_SMOOTHING);
+  if (fingersDown) return;
+  const camera = {};
+  if (Math.abs(angleDiff(compass.smooth, map.getBearing())) > 0.3) camera.bearing = compass.smooth;
+  if (state.fix) {
+    const c = map.getCenter();
+    if (Math.abs(c.lng - state.fix.lon) > 1e-6 || Math.abs(c.lat - state.fix.lat) > 1e-6) {
+      camera.center = [state.fix.lon, state.fix.lat];
+    }
+  }
+  if (camera.bearing !== undefined || camera.center) map.jumpTo(camera);
+  updateHeadingCone();
+  const now = Date.now();
+  if (now - compass.cardAt > 500) { compass.cardAt = now; renderGpsCard(); }
+}
+
+function updateHeadingCone() {
+  if (!gpsMarker) return;
+  const cone = gpsMarker.getElement().querySelector(".gps-heading");
+  const show = state.compass && compass.smooth !== null;
+  cone.hidden = !show;
+  if (show) cone.style.transform = `translate(-50%, -100%) rotate(${angleDiff(compass.smooth, map.getBearing())}deg)`;
+}
+
+// The north arrow shows whenever the map is turned; its needle points to north on the map.
+function onRotate() {
+  if (!map) return;
+  const bearing = map.getBearing();
+  $(".north-btn").hidden = !(state.compass || Math.abs(bearing) > 0.5);
+  $(".north-needle").style.transform = `rotate(${-bearing}deg)`;
+}
 
 // ---------------------------------------------------------------- the user's waypoints on the map
 
@@ -626,17 +862,40 @@ function renderWaypointMarkers() {
   for (const w of waypointsOnCurrentMap()) {
     const el = document.createElement("button");
     el.type = "button";
-    el.className = "wp-marker" + (w.id === state.selectedId ? " is-selected" : "");
+    el.className = "wp-marker" + (w.type === "existing" ? " is-halo" : "") +
+      (w.id === state.selectedId ? " is-selected" : "");
     el.dataset.id = w.id;
+    // Only the symbol shows on the map (Tim, 0.2.1); the name is in its popup and the list.
     el.innerHTML = w.type === "existing" ? '<span class="halo"></span>'
-      : symbolSvg(w.type, { size: 24, fill: cssVar("--map-yours"), edge: cssVar("--map-edge") }) +
-        `<span class="wp-label">${esc(w.name)}</span>`;
+      : symbolSvg(w.type, { size: 24, fill: cssVar("--map-yours"), edge: cssVar("--map-edge") });
     el.addEventListener("click", (e) => { e.stopPropagation(); openWaypoint(w.id); });
     waypointMarkers.set(w.id, new maplibregl.Marker({ element: el }).setLngLat([w.lon, w.lat]).addTo(map));
     // Set after addTo: MapLibre names every marker "Map marker" otherwise.
     el.setAttribute("aria-label", w.type === "existing"
       ? `${w.name || "Printed symbol"}, has your note` : `${w.name}, your waypoint`);
   }
+}
+
+// Sizes by zoom, so a zoomed-out map with many waypoints isn't cluttered. (MapLibre zoom
+// levels: Worthy Weekend's whole page fits at about 11; tiles are sharpest at 16.)
+//   - The user's symbols are full size from fullZoom in, shrink as you zoom out, and stop
+//     shrinking at `floor` (a share of full size) from floorZoom out.
+//   - The ring on a printed symbol (Existing waypoint) grows and shrinks with the map, so it
+//     stays around the printed symbol: its 38 px fits Worthy Weekend's symbols at
+//     haloFitZoom. It never gets smaller than haloMin or bigger than haloMax.
+const WP_SIZE = {
+  fullZoom: 14, floorZoom: 11.5, floor: 0.5,
+  haloFitZoom: 15, haloMin: 0.45, haloMax: 8
+};
+
+function sizeWaypointsForZoom() {
+  if (!map) return;
+  const z = map.getZoom();
+  const t = Math.min(1, Math.max(0, (z - WP_SIZE.floorZoom) / (WP_SIZE.fullZoom - WP_SIZE.floorZoom)));
+  const halo = Math.min(WP_SIZE.haloMax, Math.max(WP_SIZE.haloMin, 2 ** (z - WP_SIZE.haloFitZoom)));
+  const box = map.getContainer();
+  box.style.setProperty("--wp-scale", (WP_SIZE.floor + (1 - WP_SIZE.floor) * t).toFixed(3));
+  box.style.setProperty("--halo-scale", halo.toFixed(3));
 }
 
 function markSelected(id) {
@@ -651,8 +910,10 @@ function markSelected(id) {
 function openSheet(kind, html) {
   const sheet = $("#sheet");
   state.sheet = kind;
+  sheet.dataset.kind = kind;
   sheet.innerHTML = html;
   sheet.hidden = false;
+  $("#view-map").classList.add("has-sheet");   // map buttons hide behind the sheet
   sheet.scrollTop = 0;
   sheet.setAttribute("aria-label", {
     add: "New waypoint", waypoint: "Waypoint details", more: "More", list: "Your waypoints",
@@ -666,6 +927,7 @@ function closeSheet() {
   sheet.hidden = true;
   sheet.innerHTML = "";
   state.sheet = null;
+  $("#view-map").classList.remove("has-sheet");
   revokePhotoUrls();
   if (draftMarker) { draftMarker.remove(); draftMarker = null; }
   state.draft = null;
@@ -695,8 +957,14 @@ function startAdd(lngLat, source) {
   const now = Date.now();
   if (now - lastAddAt < 800) return;   // a long press can arrive twice on some phones
   lastAddAt = now;
-  $("#tip").hidden = true;
   const lat = lngLat.lat, lon = lngLat.lng;
+  // Waypoints show only on maps that cover their spot, so one pressed beside the printed
+  // page would vanish once saved. (The orange + adds one where you are, even off the map.)
+  if (source === "pressed" && !onCurrentMap(lat, lon)) {
+    toast("Press and hold on the map itself to add a waypoint there.");
+    return;
+  }
+  $("#tip").hidden = true;
   // Pressing again while adding moves the new waypoint to the new spot.
   if (state.sheet === "add" && state.draft && !state.draft.id) {
     syncDraftFromForm();
@@ -728,7 +996,7 @@ function drawDraftMarker() {
   const d = state.draft;
   if (!d || d.id) return;
   const el = document.createElement("div");
-  el.className = "draft-marker";
+  el.className = "draft-marker" + (d.type === "existing" ? " is-halo" : "");
   el.innerHTML = d.type === "existing" ? '<span class="halo"></span>'
     : symbolSvg(d.type, { size: 28, fill: cssVar("--map-yours"), edge: cssVar("--map-edge") });
   if (draftMarker) draftMarker.remove();
@@ -746,7 +1014,8 @@ function syncDraftFromForm() {
 function renderAddSheet() {
   const d = state.draft;
   const existing = d.type === "existing";
-  const where = { gps: "At your location", pressed: "Where you pressed", saved: "Saved spot" }[d.source];
+  const where = { gps: "At your location", pressed: "Where you pressed", saved: "Saved spot" }[d.source] +
+    (onCurrentMap(d.lat, d.lon) ? "" : ", outside this map");
   const title = d.id ? (existing ? "Edit your note" : "Edit waypoint")
     : existing ? "Add to a printed symbol" : "New waypoint";
   const sub = existing && !d.id
@@ -833,7 +1102,11 @@ async function saveWaypoint() {
   Settings.set("tipSeen", "1");     // they've found press and hold
   closeSheet();
   renderWaypointMarkers();
-  toast(record.type === "existing" ? "Note saved on this phone" : "Waypoint saved on this phone", 2500);
+  if (!onCurrentMap(record.lat, record.lon)) {
+    toast("Saved on this phone. It's outside this map, so it shows on maps that cover that spot.", 5000);
+  } else {
+    toast(record.type === "existing" ? "Note saved on this phone" : "Waypoint saved on this phone", 2500);
+  }
 }
 
 // ---------------------------------------------------------------- waypoint popup
@@ -874,12 +1147,13 @@ function openWaypoint(id) {
   revealAboveSheet([w.lon, w.lat]);
 }
 
-function confirmSheet(title, text, yesLabel, yesAction, id = "") {
+// "Keep it" goes back to where the question came from (noAction), not all the way out.
+function confirmSheet(title, text, yesLabel, yesAction, id = "", noAction = "close-sheet") {
   openSheet("confirm", `
     ${sheetHead(title, "")}
     <p class="sheet-text">${esc(text)}</p>
     <div class="btn-row">
-      <button type="button" class="btn btn-outline" data-action="close-sheet">Keep it</button>
+      <button type="button" class="btn btn-outline" data-action="${noAction}" data-id="${esc(id)}">Keep it</button>
       <button type="button" class="btn btn-danger-fill" data-action="${yesAction}" data-id="${esc(id)}">${esc(yesLabel)}</button>
     </div>`);
 }
@@ -948,12 +1222,18 @@ function openInfo() {
     m.size && ["Size", fmtSize(m.size)],
     ["Zoom levels", `${m.minZoom} to ${m.maxZoom}`],
     ["Covers", `${fmtCoords(s, w)} to ${fmtCoords(n, e)}`],
+    window.magvar && ["Compass correction", fmtDeclination(magvar.magvar((s + n) / 2, (w + e) / 2))],
     ["Saved", m.saved ? "On this phone: works with no signal" : m.url ? "Test file on the computer" : "Not saved on this phone"],
     ["App", `Haiku beta ${APP_VERSION}`]
   ].filter(Boolean);
   openSheet("info", `
     ${sheetHead("Map info", "")}
     <dl class="info-list">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`);
+}
+
+// 9.75 -> "9.8° east of true north (NOAA World Magnetic Model 2025)"
+function fmtDeclination(deg) {
+  return `${Math.abs(deg).toFixed(1)}° ${deg >= 0 ? "east" : "west"} of true north (NOAA World Magnetic Model 2025)`;
 }
 
 async function removeCurrentMap() {
@@ -965,19 +1245,55 @@ async function removeCurrentMap() {
   if (map.getSource("printed")) map.removeSource("printed");
   renderWaypointMarkers();
   toast(`Removed ${m.title} from this phone`);
-  go("#maps");
+  backToMaps();
+}
+
+// ---------------------------------------------------------------- Haiku menu (My maps)
+
+function openAppMenu() {
+  const items = [`<button type="button" class="menu-item" data-action="about">
+      ${ICONS.info}<span class="menu-item-text"><b>About Haiku</b><span>What it is, version and credits</span></span>${ICONS.chevron}
+    </button>`];
+  if (MAP_STORE_URL) {
+    items.push(`<a class="menu-item" href="${esc(MAP_STORE_URL)}" target="_blank" rel="noopener">
+      ${ICONS.store}<span class="menu-item-text"><b>Map Store</b><span>MountainPrana maps · needs a signal</span></span>${ICONS.external}
+    </a>`);
+  }
+  const sheet = $("#app-sheet");
+  sheet.innerHTML = sheetHead("Haiku", `Beta ${APP_VERSION}`, { closeAction: "close-app-menu" }) +
+    `<div class="menu">${items.join("")}</div>`;
+  sheet.hidden = false;
+  $("#app-scrim").hidden = false;
+}
+
+function closeAppMenu() {
+  const sheet = $("#app-sheet");
+  if (!sheet || sheet.hidden) return;
+  sheet.hidden = true;
+  sheet.innerHTML = "";
+  $("#app-scrim").hidden = true;
 }
 
 // ---------------------------------------------------------------- buttons
 
 const actions = {
-  "welcome-done": () => { Settings.set("welcomed", "1"); go("#maps"); },
-  "welcome-import": () => { Settings.set("welcomed", "1"); $("#file-map").click(); },
+  // Welcome shows once, so My maps replaces it (back doesn't return to it).
+  "welcome-done": () => { Settings.set("welcomed", "1"); go("#maps", true); },
+  "welcome-import": () => { Settings.set("welcomed", "1"); go("#maps", true); $("#file-map").click(); },
   "import": () => $("#file-map").click(),
   "hide-install-hint": () => { Settings.set("installHintHidden", "1"); $("#install-hint").hidden = true; },
   "open-map": (el) => go("#map/" + encodeURIComponent(el.dataset.id)),
-  "back": () => go("#maps"),
-  "fit": () => fitWhole(),
+  "back": backToMaps,
+  "app-menu": openAppMenu,
+  "close-app-menu": closeAppMenu,
+  "about": () => { closeAppMenu(); go("#about"); },
+  "about-back": backToMaps,
+  "north-up": () => {
+    if (state.compass) setCompass(false);
+    map.easeTo({ bearing: 0, duration: 400 });
+  },
+  // Showing the whole map stops following you, so the next GPS fix doesn't pull it away.
+  "fit": () => { setFollowing(false); if (state.compass) setCompass(false); fitWhole(); },
   "follow": onFollow,
   "add-here": () => {
     if (state.fix) return startAdd({ lat: state.fix.lat, lng: state.fix.lon }, "gps");
@@ -1015,8 +1331,10 @@ const actions = {
   "delete-waypoint": (el) => {
     const w = state.waypoints.find((x) => x.id === el.dataset.id);
     confirmSheet(`Delete ${w.name ? "“" + w.name + "”" : "this note"}?`,
-      "This removes it from this phone. It can't be undone.", "Delete", "confirm-delete-waypoint", w.id);
+      "This removes it from this phone. It can't be undone.", "Delete", "confirm-delete-waypoint", w.id,
+      "open-waypoint");
   },
+  "open-waypoint": (el) => openWaypoint(el.dataset.id),
   "confirm-delete-waypoint": (el) => deleteWaypoint(el.dataset.id),
   "list-waypoints": openList,
   "goto-waypoint": (el) => {
@@ -1033,7 +1351,7 @@ const actions = {
   "map-info": openInfo,
   "remove-map": () => confirmSheet(`Remove ${state.current.title}?`,
     "The map file comes off this phone; your waypoints stay. To use the map again, open its file again.",
-    "Remove", "confirm-remove-map"),
+    "Remove", "confirm-remove-map", "", "more"),
   "confirm-remove-map": removeCurrentMap
 };
 
@@ -1051,7 +1369,9 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.sheet) closeSheet();
+  if (e.key !== "Escape") return;
+  if (state.sheet) closeSheet();
+  closeAppMenu();
 });
 
 $("#file-map").addEventListener("change", (e) => {

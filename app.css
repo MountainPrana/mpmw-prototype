@@ -62,6 +62,14 @@ a { color: var(--primary); }
 .wordmark svg { fill: currentColor; flex: none; }
 .wordmark span { font-family: var(--font-condensed); font-size: 24px; line-height: 28px; font-weight: 700; }
 .wordmark-lg { gap: 10px; }
+/* On My maps the wordmark is the Haiku menu button: the three bars read as a menu icon.
+   Padding makes the tap target bigger without moving the wordmark. */
+.wordmark-btn {
+  align-self: flex-start; min-height: var(--touch-target); margin: -8px -10px; padding: 8px 10px;
+  border: 0; border-radius: var(--radius-md); background: transparent; font: inherit; cursor: pointer;
+}
+.wordmark-btn:active { opacity: 0.6; }
+.wordmark-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .wordmark-lg span { font-size: 30px; line-height: 32px; letter-spacing: -0.01em; }
 
 .contour-art { position: absolute; fill: none; stroke: var(--contour); pointer-events: none; }
@@ -125,6 +133,8 @@ a { color: var(--primary); }
 .welcome-points svg { flex: none; }
 .yours-icon { color: var(--yours); }
 .welcome-actions { display: flex; flex-direction: column; gap: 14px; }
+.about-credits { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-muted); }
+.about-credits b { color: var(--ink); font-weight: 600; }
 
 /* ---------- My maps ---------- */
 .maps { background: var(--surface); }
@@ -205,6 +215,12 @@ a { color: var(--primary); }
 .yours-btn:active { background: var(--map-yours); filter: brightness(0.9); }
 .gps-btn { background: var(--surface-raised); color: var(--map-gps); }
 .gps-btn[aria-pressed="true"] { background: var(--map-gps); color: #FFFFFF; }
+/* Compass mode: the location button shows a heading arrow instead of the target. */
+.gps-btn .icon-compass, .gps-btn.is-compass .icon-follow { display: none; }
+.gps-btn.is-compass .icon-compass { display: block; }
+/* North arrow: shows when the map is turned; the needle points to north on the map. */
+.north-btn .needle-n { fill: var(--danger); }
+.north-btn .needle-s { fill: var(--ink-muted); }
 
 .topbar {
   position: absolute; left: 16px; right: 16px; top: calc(var(--safe-top) + 10px); z-index: 3;
@@ -264,6 +280,12 @@ a { color: var(--primary); }
   border-radius: 50%; background: rgba(26,115,232,0.15);       /* map-gps at 15% */
   border: 1.5px solid rgba(26,115,232,0.45);
 }
+.gps-heading {
+  position: absolute; left: 50%; top: 50%; width: 48px; height: 48px;
+  transform-origin: 50% 100%; transform: translate(-50%, -100%);
+}
+.gps-heading svg { display: block; }
+.gps-heading stop { stop-color: var(--map-gps); }
 .gps-dot {
   position: absolute; inset: 0; border-radius: 50%; background: var(--map-gps);
   border: 3px solid var(--map-edge); box-shadow: 0 1px 4px rgba(0,0,0,0.35);
@@ -272,24 +294,32 @@ a { color: var(--primary); }
   width: 44px; height: 44px; padding: 0; border: 0; background: transparent;
   display: flex; align-items: center; justify-content: center;
 }
-.wp-marker svg { filter: drop-shadow(0 1px 1.5px rgba(0,0,0,0.35)); }
-.wp-label {
-  position: absolute; left: 42px; top: 50%; transform: translateY(-50%);
-  padding: 1px 7px; border-radius: var(--radius-sm); white-space: nowrap; max-width: 160px;
-  overflow: hidden; text-overflow: ellipsis;
-  background: rgba(251,249,244,0.94); color: var(--map-yours); font: 600 13px/20px var(--font-sans);
-  pointer-events: none;
+/* Sizes follow the zoom (--wp-scale and --halo-scale are set on #map by
+   sizeWaypointsForZoom in app.js). The button stays 44 px so it's still easy to tap. */
+.wp-marker svg {
+  filter: drop-shadow(0 1px 1.5px rgba(0,0,0,0.35));
+  transform: scale(var(--wp-scale, 1)); transition: transform 0.12s ease-out;
 }
+/* The ring on a printed symbol: 70% opaque so the printed symbol shows through, and sized
+   with the map so it stays around the symbol (the line width stays the same). */
 .halo {
-  width: 38px; height: 38px; border-radius: 50%; border: 3px solid var(--map-yours);
+  flex: none; width: calc(38px * var(--halo-scale, 1)); height: calc(38px * var(--halo-scale, 1));
+  border-radius: 50%; border: 3px solid var(--map-yours); opacity: 0.7;
   box-shadow: 0 0 0 1.5px var(--map-edge), inset 0 0 0 1.5px var(--map-edge);
 }
 .wp-marker.is-selected::after {
-  content: ""; position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: calc(52px * var(--wp-scale, 1)); height: calc(52px * var(--wp-scale, 1));
   transform: translate(-50%, -50%); border-radius: 50%; border: 2.5px dashed var(--map-select);
   box-shadow: 0 0 0 1.5px var(--map-edge), inset 0 0 0 1.5px var(--map-edge);
 }
+.wp-marker.is-halo.is-selected::after {
+  width: calc(38px * var(--halo-scale, 1) + 14px); height: calc(38px * var(--halo-scale, 1) + 14px);
+}
 .draft-marker { width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.draft-marker.is-halo {
+  width: calc(38px * var(--halo-scale, 1) + 18px); height: calc(38px * var(--halo-scale, 1) + 18px);
+}
 .draft-marker::before {
   content: ""; position: absolute; inset: 0; border-radius: 50%;
   border: 2px dashed var(--map-yours); background: rgba(184,70,27,0.10);   /* map-yours at 10% */
@@ -307,6 +337,16 @@ a { color: var(--primary); }
   display: flex; flex-direction: column; gap: 14px;
   animation: sheet-in 0.18s ease-out;
 }
+/* Sheets about a spot on the map stay short enough to leave a strip of map above them,
+   so the spot stays in sight (the sheet scrolls instead). */
+.sheet[data-kind="add"], .sheet[data-kind="waypoint"] {
+  max-height: calc(100% - var(--safe-top) - 150px);
+}
+/* Dims My maps behind the Haiku menu; tapping it closes the menu. */
+.scrim { position: absolute; inset: 0; z-index: 4; background: rgba(30,33,48,0.32); }   /* granite-ink at 32% */
+/* While a sheet is open, the map buttons hide behind it instead of peeking over its edge. */
+.mapview.has-sheet .map-controls,
+.mapview.has-sheet .maplibregl-ctrl-bottom-left { visibility: hidden; }
 @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sheet { animation: none; } }
 .sheet-grip { align-self: center; width: 40px; height: 5px; border-radius: 3px; background: var(--line); flex: none; }
