@@ -1,0 +1,115 @@
+/* Haiku color tokens, Day and Night.
+ *
+ * Copied from the Design system artifact "MountainPrana Map Works"
+ * (https://claude.ai/artifact/9XxyEkYf6an4Sez2fnwfje), approved 2026-11-26.
+ * This is the one shared file for colors: the web beta uses it now, and the phone app
+ * should copy the same values. Build screens with the semantic names below (surface, ink,
+ * primary, yours, map-yours, ...), never with raw hex in other files.
+ *
+ * Day is the default. Night follows the phone's dark mode setting.
+ * Colors drawn on the map (map-*) are the same in both themes.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Palette (raw colors; prefer the semantic tokens further down) */
+  --far-ridge: #A2A8C3;
+  --deep-ridge: #45476E;
+  --granite-ink: #1E2130;
+  --blaze: #B8461B;
+  --talus: #6B6660;
+  --waxed-canvas: #B59B74;
+  --krummholz: #2F6B4F;
+  --ochre: #C08A1E;
+  --red-rock: #9E2F28;
+  --gps-blue: #1A73E8;
+  --ridge-50: #F2F3F8;
+  --ridge-100: #E5E7F0;
+  --ridge-200: #CFD3E2;
+  --ridge-300: #B7BBD2;
+  --ridge-400: #A2A8C3;
+  --ridge-500: #8186A7;
+  --ridge-600: #5F638C;
+  --ridge-700: #45476E;
+  --ridge-800: #2E2F52;
+  --ridge-900: #1D1D35;
+  --map-paper: #F2EFE8;
+  --map-lichen: #C3C83C;
+
+  /* Drawn on the map: never change with the theme */
+  --map-yours: #B8461B;
+  --map-select: #45476E;
+  --map-gps: #1A73E8;
+  --map-edge: #FFFFFF;
+
+  /* Semantic tokens, Day */
+  --surface: #F2EFE8;
+  --surface-raised: #FBF9F4;
+  --surface-tint: #E5E7F0;
+  --surface-brand: #A2A8C3;
+  --ink: #1E2130;
+  --ink-muted: #6B6660;
+  --line: #D9D4CA;
+  --line-strong: #7F7A72;
+  --primary: #45476E;
+  --primary-pressed: #2E2F52;
+  --on-primary: #F2EFE8;
+  --yours: #B8461B;
+  --on-yours: #FFFFFF;
+  --yours-soft: #FAEDE6;
+  --offline: #C3C83C;
+  --on-offline: #1E2130;
+  --success: #2F6B4F;
+  --success-soft: #E1ECE5;
+  --warning: #87600F;
+  --warning-soft: #F5E9CC;
+  --danger: #9E2F28;
+  --danger-soft: #F6E0DC;
+  --focus-ring: #45476E;
+
+  --shadow-float: 0 1px 2px rgba(30,33,48,0.18), 0 4px 12px rgba(30,33,48,0.12);
+
+  /* Type, spacing and corners */
+  --font-sans: Barlow, system-ui, sans-serif;
+  --font-condensed: "Barlow Condensed", Barlow, system-ui, sans-serif;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --touch-target: 44px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Semantic tokens, Night */
+    --surface: #15171F;
+    --surface-raised: #1E2130;
+    --surface-tint: #2A2D3E;
+    --surface-brand: #45476E;
+    --ink: #F2EFE8;
+    --ink-muted: #A8A49D;
+    --line: #2F3242;
+    --line-strong: #767990;
+    --primary: #B7BBD2;
+    --primary-pressed: #CFD3E2;
+    --on-primary: #1E2130;
+    --yours: #E8834F;
+    --on-yours: #1E2130;
+    --yours-soft: #3B2A24;
+    --offline: #C3C83C;
+    --on-offline: #1E2130;
+    --success: #6FAE8A;
+    --success-soft: #1D3127;
+    --warning: #D9A441;
+    --warning-soft: #352C1A;
+    --danger: #EC7A6E;
+    --danger-soft: #3A2224;
+    --focus-ring: #B7BBD2;
+
+    --shadow-float: 0 1px 2px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.35);
+  }
+}

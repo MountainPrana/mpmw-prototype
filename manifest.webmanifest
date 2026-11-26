@@ -1,0 +1,15 @@
+{
+  "name": "Haiku by MountainPrana Map Works",
+  "short_name": "Haiku",
+  "description": "Printed trail maps on your phone, with no signal.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#A2A8C3",
+  "theme_color": "#A2A8C3",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,12 +1,29 @@
-// Service worker: keeps a copy of the page and its libraries on the device after the
-// first visit, so the page opens with no signal. Map files are not cached here; they
-// are opened from the device with "Open file".
+// Service worker: keeps a copy of the app (pages, styles, fonts, libraries) on the phone
+// after the first visit, so Haiku opens with no signal. Map files are not cached here;
+// they are saved on the phone by the app itself when opened (see store.js).
 //
-// After changing index.html or anything in lib/, bump VERSION so phones fetch the new copy.
-const VERSION = "mpmw-prototype-v1";
+// After changing any file listed below, raise VERSION so phones fetch the new copy.
+const VERSION = "haiku-v2";
 const FILES = [
   "./",
   "./index.html",
+  "./app.css",
+  "./tokens.css",
+  "./app.js",
+  "./store.js",
+  "./symbols.js",
+  "./manifest.webmanifest",
+  "./icons/icon-180.png",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./icons/icon-maskable-512.png",
+  "./fonts/barlow-latin-400-normal.woff2",
+  "./fonts/barlow-latin-500-normal.woff2",
+  "./fonts/barlow-latin-600-normal.woff2",
+  "./fonts/barlow-latin-700-normal.woff2",
+  "./fonts/barlow-condensed-latin-500-normal.woff2",
+  "./fonts/barlow-condensed-latin-600-normal.woff2",
+  "./fonts/barlow-condensed-latin-700-normal.woff2",
   "./lib/maplibre-gl.css",
   "./lib/maplibre-gl.js",
   "./lib/pmtiles.js"
@@ -25,7 +42,7 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Network first (so updates show up when there is signal), cached copy when offline.
+// Network first (so updates show up when there is signal), saved copy when offline.
 // Map tiles and partial-file requests are left alone.
 self.addEventListener("fetch", (event) => {
   const req = event.request;
