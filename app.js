@@ -12,7 +12,7 @@
 
 "use strict";
 
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.3.1";
 
 // The Map Store shows in the Haiku menu once the website exists: put its address here.
 const MAP_STORE_URL = "";

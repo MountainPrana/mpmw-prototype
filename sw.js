@@ -3,7 +3,7 @@
 // they are saved on the phone by the app itself when opened (see store.js).
 //
 // After changing any file listed below, raise VERSION so phones fetch the new copy.
-const VERSION = "haiku-v4";
+const VERSION = "haiku-v5";
 const FILES = [
   "./",
   "./index.html",
@@ -13,10 +13,11 @@ const FILES = [
   "./store.js",
   "./symbols.js",
   "./manifest.webmanifest",
-  "./icons/icon-180.png",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./icons/icon-maskable-512.png",
+  "./icons/favicon.png",
+  "./icons/home-180.png",
+  "./icons/home-192.png",
+  "./icons/home-512.png",
+  "./icons/home-maskable-512.png",
   "./fonts/barlow-latin-400-normal.woff2",
   "./fonts/barlow-latin-500-normal.woff2",
   "./fonts/barlow-latin-600-normal.woff2",
