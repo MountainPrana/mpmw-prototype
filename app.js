@@ -12,7 +12,7 @@
 
 "use strict";
 
-const APP_VERSION = "0.3.2";
+const APP_VERSION = "0.3.3";
 
 // The Map Store shows in the Haiku menu once the website exists: put its address here.
 const MAP_STORE_URL = "";
@@ -713,12 +713,14 @@ document.addEventListener("visibilitychange", () => {
 // Both point to magnetic north, so the declination from NOAA's World Magnetic Model
 // (lib/magvar.js, works offline) is added to get true north, which is up on the map.
 
-const COMPASS_SMOOTHING = 0.1;   // share of the way to the newest reading, each frame (60 a second)
+const COMPASS_LAG = 0.33;        // seconds the map's turn trails the compass: steadier, still live (item 25)
+const COMPASS_GLIDE = 0.5;       // seconds to glide to each new GPS fix in compass mode, instead of jumping (item 25)
 const COMPASS_DRAG_EXIT_PX = 36; // a drag this far (about 1/4 inch) leaves compass mode; less is a resting thumb
 const compass = {
   listening: false, raw: null, smooth: null, accuracy: -1,
   gotReading: false, frame: null, timer: null, cardAt: 0,
   decl: 0, declAt: null,          // declination in degrees east, and where it was worked out
+  lastFrame: 0, center: null,      // last frame's time, and the map center gliding toward the GPS fix
   events: 0, eventsAt: 0, rate: 0, // compass readings counted for the test readout
   stopReason: "", stopAt: 0        // why compass mode last stopped (test readout)
 };
@@ -759,6 +761,7 @@ function setCompass(on, reason = "") {
     setFollowing(true);
     map.touchZoomRotate.disableRotation();
     compass.raw = compass.smooth = null;
+    compass.center = null;
     startCompassSensor();
   } else {
     if (map) map.touchZoomRotate.enableRotation();
@@ -844,18 +847,27 @@ function angleDiff(a, b) { return ((a - b + 540) % 360) - 180; }   // shortest t
 
 // Each frame: ease toward the newest compass reading (so the map doesn't shiver), turn the
 // map to it, and keep your position in the middle. Waits while fingers are on the map.
-function compassFrame() {
+function compassFrame(t) {
   compass.frame = requestAnimationFrame(compassFrame);
+  const dt = compass.lastFrame ? Math.min(0.1, (t - compass.lastFrame) / 1000) : 1 / 60;
+  compass.lastFrame = t;
   if (!state.compass || compass.raw === null) return;
+  // Ease toward the newest reading, the same at any frame rate: the map trails the compass
+  // by about COMPASS_LAG seconds, which hides the jitter in the phone's readings (item 25).
   compass.smooth = compass.smooth === null ? compass.raw
-    : norm360(compass.smooth + angleDiff(compass.raw, compass.smooth) * COMPASS_SMOOTHING);
-  if (fingersDown) return;
+    : norm360(compass.smooth + angleDiff(compass.raw, compass.smooth) * (1 - Math.exp(-dt / COMPASS_LAG)));
+  if (fingersDown) { compass.center = null; return; }
   const camera = {};
   if (Math.abs(angleDiff(compass.smooth, map.getBearing())) > 0.3) camera.bearing = compass.smooth;
   if (state.fix) {
+    // Glide to each new GPS fix (they come about once a second) instead of jumping to it.
+    if (!compass.center) { const c = map.getCenter(); compass.center = { lon: c.lng, lat: c.lat }; }
+    const k = 1 - Math.exp(-dt / COMPASS_GLIDE);
+    compass.center.lon += (state.fix.lon - compass.center.lon) * k;
+    compass.center.lat += (state.fix.lat - compass.center.lat) * k;
     const c = map.getCenter();
-    if (Math.abs(c.lng - state.fix.lon) > 1e-6 || Math.abs(c.lat - state.fix.lat) > 1e-6) {
-      camera.center = [state.fix.lon, state.fix.lat];
+    if (Math.abs(c.lng - compass.center.lon) > 1e-7 || Math.abs(c.lat - compass.center.lat) > 1e-7) {
+      camera.center = [compass.center.lon, compass.center.lat];
     }
   }
   if (camera.bearing !== undefined || camera.center) map.jumpTo(camera);
