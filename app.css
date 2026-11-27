@@ -426,6 +426,15 @@ a { color: var(--primary); }
 .info-list dt { color: var(--ink-muted); }
 .info-list dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 
+/* ---------- Test readout (test mode only: tap the version in About Haiku five times) ---------- */
+.test-readout {
+  position: absolute; left: 8px; bottom: calc(var(--safe-bottom) + 140px); z-index: 6; margin: 0;
+  padding: 6px 8px; border-radius: var(--radius-sm); pointer-events: none; opacity: 0.88;
+  background: var(--granite-ink); color: var(--map-paper);
+  font: 12px/1.35 ui-monospace, Menlo, monospace; white-space: pre;
+}
+.test-readout[hidden] { display: none; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--safe-bottom) + 24px); z-index: 20; transform: translateX(-50%);

@@ -3,7 +3,7 @@
 // they are saved on the phone by the app itself when opened (see store.js).
 //
 // After changing any file listed below, raise VERSION so phones fetch the new copy.
-const VERSION = "haiku-v5";
+const VERSION = "haiku-v6";
 const FILES = [
   "./",
   "./index.html",

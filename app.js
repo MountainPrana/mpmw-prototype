@@ -12,7 +12,7 @@
 
 "use strict";
 
-const APP_VERSION = "0.3.1";
+const APP_VERSION = "0.3.2";
 
 // The Map Store shows in the Haiku menu once the website exists: put its address here.
 const MAP_STORE_URL = "";
@@ -118,7 +118,7 @@ function showView(name) {
   for (const view of document.querySelectorAll(".view")) {
     view.classList.toggle("is-active", view.id === "view-" + name);
   }
-  if (name !== "map") { stopGps(); closeSheet(); if (state.compass) setCompass(false); }
+  if (name !== "map") { stopGps(); closeSheet(); if (state.compass) setCompass(false, "left the map screen"); }
   if (name !== "maps") closeAppMenu();
 }
 
@@ -388,13 +388,26 @@ function ensureMap() {
   map.addControl(new maplibregl.ScaleControl({ unit: "imperial", maxWidth: 90 }), "bottom-left");
   mapReady = new Promise((resolve) => map.once("load", resolve));
 
-  // Dragging the map stops following you (and compass mode). Pinching to zoom doesn't.
+  // Dragging the map stops following you. In compass mode a resting or shifting thumb is
+  // ignored: only a drag of COMPASS_DRAG_EXIT_PX (about 1/4 inch) leaves compass mode, and
+  // a smaller one is undone when the finger lifts (item 19). Pinching to zoom doesn't count.
+  let dragFrom = null;
   map.on("dragstart", (e) => {
     const touches = e.originalEvent && e.originalEvent.touches;
     if (touches && touches.length > 1) return;
+    if (state.compass) { dragFrom = pointOf(e.originalEvent); return; }
     setFollowing(false);
-    if (state.compass) setCompass(false);
   });
+  map.on("drag", (e) => {
+    if (!state.compass || !dragFrom) return;
+    const p = pointOf(e.originalEvent);
+    if (p && Math.hypot(p.x - dragFrom.x, p.y - dragFrom.y) > COMPASS_DRAG_EXIT_PX) {
+      dragFrom = null;
+      setFollowing(false);
+      setCompass(false, "dragged the map");
+    }
+  });
+  map.on("dragend", () => { dragFrom = null; });
   map.on("rotate", onRotate);
   map.on("zoom", () => { sizeAccuracyCircle(); sizeWaypointsForZoom(); });
   sizeWaypointsForZoom();
@@ -443,7 +456,7 @@ async function openMap(rec) {
     map.setMinZoom(Math.max(0, rec.minZoom - 1));
     setAlignment(false);
     setFollowing(false);
-    if (state.compass) setCompass(false);
+    if (state.compass) setCompass(false, "opened a map");
     fitWhole(false);
     renderWaypointMarkers();
   }
@@ -527,9 +540,15 @@ function setupLongPress() {
     }, 550);
   };
   const moved = (x, y) => { if (timer && Math.hypot(x - start.x, y - start.y) > 10) cancel(); };
-  const countFingers = (e) => { fingersDown = e.touches.length; };
+  // Fingers on the map are counted from every touch on the page. Counting only touches that
+  // ended on the map missed a finger lifted over a marker that was redrawn meanwhile: its
+  // "touchend" never reached the map, the count stayed at one, and the compass waited for
+  // good (item 19). A touch whose element is gone no longer counts.
+  const countFingers = (e) => {
+    fingersDown = [...e.touches].filter((t) => t.target instanceof Node && box.contains(t.target)).length;
+  };
   for (const type of ["touchstart", "touchend", "touchcancel"]) {
-    box.addEventListener(type, countFingers, { passive: true });
+    document.addEventListener(type, countFingers, { passive: true, capture: true });
   }
   box.addEventListener("touchstart", (e) => {
     if (e.touches.length !== 1) return cancel();
@@ -662,7 +681,7 @@ function setFollowing(on) {
 function onFollow() {
   if (state.following && !state.compass) return startCompassMode();
   if (state.compass) {
-    setCompass(false);
+    setCompass(false, "location button");
     map.easeTo({ bearing: 0, duration: 400 });
     return;
   }
@@ -680,7 +699,7 @@ function onFollow() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { stopGps(); stopCompassSensor(); }
+  if (document.hidden) { stopGps(); stopCompassSensor(); fingersDown = 0; }
   else if ($("#view-map").classList.contains("is-active")) {
     startGps();
     if (state.compass) startCompassSensor();
@@ -695,11 +714,22 @@ document.addEventListener("visibilitychange", () => {
 // (lib/magvar.js, works offline) is added to get true north, which is up on the map.
 
 const COMPASS_SMOOTHING = 0.1;   // share of the way to the newest reading, each frame (60 a second)
+const COMPASS_DRAG_EXIT_PX = 36; // a drag this far (about 1/4 inch) leaves compass mode; less is a resting thumb
 const compass = {
   listening: false, raw: null, smooth: null, accuracy: -1,
   gotReading: false, frame: null, timer: null, cardAt: 0,
-  decl: 0, declAt: null           // declination in degrees east, and where it was worked out
+  decl: 0, declAt: null,          // declination in degrees east, and where it was worked out
+  events: 0, eventsAt: 0, rate: 0, // compass readings counted for the test readout
+  stopReason: "", stopAt: 0        // why compass mode last stopped (test readout)
 };
+
+// Where a mouse or the first finger is, on the screen.
+function pointOf(ev) {
+  if (!ev) return null;
+  const t = ev.touches && ev.touches[0];
+  if (t) return { x: t.clientX, y: t.clientY };
+  return typeof ev.clientX === "number" ? { x: ev.clientX, y: ev.clientY } : null;
+}
 
 function startCompassMode() {
   // On iPhone the permission has to be asked right here, in the tap. (Newer Chrome has the
@@ -721,7 +751,8 @@ function isIPhone() {
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);   // iPad asks to be a Mac
 }
 
-function setCompass(on) {
+function setCompass(on, reason = "") {
+  if (!on && state.compass) { compass.stopReason = reason || "turned off"; compass.stopAt = Date.now(); }
   state.compass = on;
   $('[data-action="follow"]').classList.toggle("is-compass", on);
   if (on) {
@@ -753,7 +784,7 @@ function startCompassSensor() {
   compass.timer = setTimeout(() => {
     if (state.compass && !compass.gotReading) {
       toast("This device has no compass Haiku can use, so the map stays north up.", 5000);
-      setCompass(false);
+      setCompass(false, "no compass readings");
       map.easeTo({ bearing: 0, duration: 400 });
     }
   }, 3000);
@@ -769,6 +800,7 @@ function stopCompassSensor() {
 }
 
 function onOrientation(e) {
+  compass.events++;
   let magnetic = null;
   if (typeof e.webkitCompassHeading === "number" && e.webkitCompassHeading >= 0) {
     magnetic = e.webkitCompassHeading;                       // iPhone
@@ -1289,11 +1321,11 @@ const actions = {
   "about": () => { closeAppMenu(); go("#about"); },
   "about-back": backToMaps,
   "north-up": () => {
-    if (state.compass) setCompass(false);
+    if (state.compass) setCompass(false, "north arrow");
     map.easeTo({ bearing: 0, duration: 400 });
   },
   // Showing the whole map stops following you, so the next GPS fix doesn't pull it away.
-  "fit": () => { setFollowing(false); if (state.compass) setCompass(false); fitWhole(); },
+  "fit": () => { setFollowing(false); if (state.compass) setCompass(false, "show whole map"); fitWhole(); },
   "follow": onFollow,
   "add-here": () => {
     if (state.fix) return startAdd({ lat: state.fix.lat, lng: state.fix.lon }, "gps");
@@ -1390,9 +1422,62 @@ $("#file-photo").addEventListener("change", async (e) => {
   renderAddSheet();
 });
 
+// ---------------------------------------------------------------- test mode (item 19)
+//
+// A small readout on the map screen for testing compass mode on a phone; off for normal use.
+// Turn it on or off by tapping the version in About Haiku five times (or open the page with
+// ?test). It shows whether compass mode is on, how many compass readings arrive each second,
+// the heading, the map's bearing, fingers on the map, and why compass mode last stopped.
+
+let testTimer = null;
+let versionTaps = [];
+
+function testMode() { return Settings.get("testMode") === "1"; }
+
+function setTestMode(on) {
+  Settings.set("testMode", on ? "1" : "0");
+  toast(on ? "Test mode on: the map screen shows a compass readout." : "Test mode off.");
+  updateTestReadout();
+}
+
+function updateTestReadout() {
+  const on = testMode();
+  $("#test-readout").hidden = !on;
+  clearInterval(testTimer);
+  testTimer = on ? setInterval(renderTestReadout, 250) : null;
+  if (on) renderTestReadout();
+}
+
+function renderTestReadout() {
+  if (document.hidden || !$("#view-map").classList.contains("is-active")) return;
+  const now = Date.now();
+  if (now - compass.eventsAt >= 1000) {
+    compass.rate = compass.eventsAt ? Math.round(compass.events * 1000 / (now - compass.eventsAt)) : 0;
+    compass.events = 0;
+    compass.eventsAt = now;
+  }
+  const deg = (v) => (typeof v === "number" ? `${Math.round(norm360(v))}°` : "–");
+  const ago = compass.stopAt ? ` (${Math.round((now - compass.stopAt) / 1000)} s ago)` : "";
+  $("#test-readout").textContent = [
+    `compass  ${state.compass ? "ON" : "off"}    follow ${state.following ? "on" : "off"}`,
+    `readings ${compass.listening ? compass.rate + " a second" : "not listening"}`,
+    `heading  ${deg(compass.raw)}   smooth ${deg(compass.smooth)}`,
+    `map      ${map ? deg(map.getBearing()) : "–"}   fingers ${fingersDown}`,
+    `stopped  ${compass.stopReason || "–"}${ago}`
+  ].join("\n");
+}
+
+$("#about-version").addEventListener("click", () => {
+  const now = Date.now();
+  versionTaps = versionTaps.filter((t) => now - t < 2000).concat(now);
+  if (versionTaps.length >= 5) { versionTaps = []; setTestMode(!testMode()); }
+});
+
 // ---------------------------------------------------------------- start
 
 async function start() {
+  if (new URLSearchParams(location.search).has("test")) Settings.set("testMode", "1");
+  updateTestReadout();
   try {
     state.maps = (await Store.all("maps")).map((m) => ({ ...m, saved: true }));
     state.waypoints = await Store.all("waypoints");
